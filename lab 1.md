@@ -22,14 +22,29 @@ This lab focuses on auditing, compliance, and visibility of AWS resources using:
 
 ## Architecture Summary
 
+```
+EC2 Instances
+    └── SSM Agent (pre-installed on Amazon Linux 2)
+            ├── Systems Manager Inventory → metadata, packages, patches
+            ├── Fleet Manager → instance details, connections
+            └── Session Manager → browser-based terminal (no SSH needed)
+
+AWS Config
+    └── Configuration Recorder (continuous)
+            └── Config Rules
+                    ├── ec2-instance-managed-by-systems-manager
+                    └── iam-user-no-policies-check
+```
+
 ### Systems Manager
-- Manage EC2 instances
-- Remote access (no SSH)
-- Collect inventory (metadata, apps)
+- Manage EC2 instances without opening port 22
+- Remote access via browser-based Session Manager
+- Collect inventory: installed apps, OS info, patch state
 
 ### AWS Config
-- Tracks resource configurations
-- Evaluates compliance using rules
+- Tracks every configuration change over time
+- Evaluates resources against compliance rules
+- Stores a full configuration history in S3
 
 ---
 
@@ -85,9 +100,12 @@ aws ec2 describe-instances
 
 - No SSH required — no port 22 needed
 - Benefits:
-  - More secure
-  - No key management
-  - Auditing via CloudTrail
+  - More secure — no inbound firewall rules needed
+  - No key pair management — no `.pem` files to rotate or lose
+  - Full audit trail — all session activity logged to CloudTrail and S3
+  - Works for instances in private subnets with no public IP
+
+> **How it works:** Session Manager communicates outbound over HTTPS (port 443) via the SSM endpoint. The instance needs internet access (or a VPC endpoint) and the `AmazonSSMManagedInstanceCore` IAM policy.
 
 ---
 
@@ -103,9 +121,12 @@ aws ec2 describe-instances
 
 ### Notes
 
-- Tracks configuration changes
-- Stores history
-- Used for compliance auditing
+- Tracks configuration changes and stores the full history
+- You can query "what did this resource look like on [date]?"
+- Used for compliance auditing and incident investigation
+- The service-linked role (`AWSServiceRoleForConfig`) grants Config read access to all supported resource types
+
+> **Important:** Make sure the recorder is ON. Config won't detect anything while paused.
 
 ### Ensure Recorder is ON
 
@@ -128,8 +149,11 @@ Checks if EC2 instances are managed by SSM and reachable.
 ### Notes
 
 Non-compliant if:
-- No SSM agent installed
-- Instance not connected to SSM
+- No SSM agent installed or outdated
+- Instance not connected to SSM (check: Fleet Manager shows "Connection status: Offline")
+- Missing required IAM permissions (`AmazonSSMManagedInstanceCore`)
+
+> **Tip:** Use this rule as a quick health check — any non-compliant EC2 instance can't be managed remotely via SSM.
 
 ---
 
@@ -143,8 +167,10 @@ Detect IAM users with inline policies attached.
 
 ### Notes
 
-- Best practice: use roles instead of inline policies
-- This is audit only (no remediation)
+- Best practice: **never** attach inline policies directly to users — use groups and roles instead
+- Inline policies are harder to audit because they don't appear in the global policies list
+- This rule is audit-only (no auto-remediation) — a human must review and fix violations
+- In production, also add `iam-password-policy` and `iam-root-access-key-check` rules
 
 ---
 
@@ -179,6 +205,8 @@ Detect IAM users with inline policies attached.
 ### Notes
 
 Inventory gives deep visibility — useful for audits, troubleshooting, and compliance checks.
+
+> **Pro tip:** You can query inventory data using the SSM Inventory Query feature or export it to Athena via S3 for SQL-based analysis across your entire fleet.
 
 ---
 

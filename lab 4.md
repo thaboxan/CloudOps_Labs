@@ -36,10 +36,12 @@ This lab focuses on building a monitoring solution for an EC2 application server
 ### Notes
 
 - SSM allows remote management without SSH
-- Requires IAM roles + network access (ports 80/443)
-- CloudWatch Agent collects:
-  - System metrics (CPU, memory, disk)
-  - Logs
+- Requires IAM roles + network access (ports 80/443 outbound to SSM endpoints)
+- CloudWatch Agent collects **OS-level metrics** not available natively:
+  - Memory utilization (AWS doesn't expose this by default)
+  - Disk space usage per mount point
+  - Custom application logs
+- The agent is separate from the SSM Agent — both must be installed and running
 
 ## Task 2: Configure & Start CloudWatch Agent
 
@@ -87,11 +89,13 @@ Expected output:
 
 ### Notes
 
-- Install ≠ Configure ≠ Start
+- Install ≠ Configure ≠ Start — three separate steps, each can fail independently
 - Parameter Store enables:
-  - Reuse
-  - Versioning
-  - Centralized config
+  - **Reuse**: same config file pushed to many instances via SSM
+  - **Versioning**: roll back to a previous config if the new one causes issues
+  - **Centralized config**: update in one place, propagates everywhere
+
+> **Namespace note:** CloudWatch Agent metrics appear under the `CWAgent` namespace, separate from the built-in EC2 metrics under `AWS/EC2`. When building dashboards, you'll need to combine both namespaces.
 
 ## Task 3: Create CloudWatch Dashboard
 
@@ -123,8 +127,10 @@ Expected output:
 
 ### Notes
 
-- SNS enables alert notifications
-- Multiple alarms can use same topic
+- SNS enables alert notifications across multiple channels simultaneously
+- Multiple alarms can share the same topic — one topic can notify the entire team
+- Always **confirm the subscription** before testing alarms — unconfirmed subscriptions receive nothing
+- In production, use a team email alias or PagerDuty/Slack integration as the endpoint
 
 ## Task 5: Create CloudWatch Alarm
 
@@ -136,11 +142,13 @@ Expected output:
 
 ### Notes
 
-- Detects EC2 system failures
-- Include:
-  - Description
-  - Runbook link
-  - Remediation steps
+- `StatusCheckFailed_System` detects hardware/hypervisor failures on the underlying AWS host
+- Use `StatusCheckFailed_Instance` for OS-level failures within your instance
+- Good alarms always include:
+  - A clear description (what broke)
+  - A runbook link (how to fix it)
+  - Remediation steps in the alarm description
+- Set the evaluation period carefully — 1 data point in 1 minute is fine for critical system checks
 
 ## Task 6: Test Alarm Using CLI
 
@@ -164,11 +172,9 @@ aws cloudwatch set-alarm-state \
 
 ### Notes
 
-- Faster than waiting for real failure
-- Useful for testing:
-  - SNS
-  - Lambda
-  - Alerts
+- Manually setting alarm state is much faster than waiting for a real failure in a lab/test environment
+- Use this technique in CI/CD pipelines to validate that alarm → SNS → Lambda workflows are wired correctly before going to production
+- Always reset to `OK` after testing so the alarm doesn't stay in `ALARM` and suppress real future alerts
 
 ## Task 7: Lambda Canary Monitoring
 
@@ -203,43 +209,56 @@ aws cloudwatch set-alarm-state \
 
 ### Notes
 
-- Canary = synthetic monitoring
-- Simulates real user request
+- **Canary = synthetic monitoring** — simulates a real user request from outside your infrastructure
 - Detects:
-  - downtime
-  - incorrect responses
+  - Complete downtime (connection refused / timeout)
+  - Wrong content (site returns 200 but shows an error page)
+  - Regression bugs (expected string no longer present after a deployment)
+- EventBridge rate expressions: `rate(1 minute)`, `rate(5 minutes)`, `cron(0 8 * * ? *)` (8 AM daily)
+- Lambda canaries are much cheaper than AWS Synthetics Canaries but less feature-rich
 
 ## Key Concepts
 
 ### Monitoring Components
 
-- Metrics
-- Logs
-- Events
-- Alarms
-- Notifications
+| Component | What it measures | Example |
+|-----------|-----------------|---------|
+| **Metrics** | Numeric time-series data | CPU %, memory %, error count |
+| **Logs** | Text event records | Apache access log, app errors |
+| **Events** | State change notifications | Instance stopped, deployment finished |
+| **Alarms** | Threshold breach detection | CPU > 80% for 5 minutes |
+| **Notifications** | Human/system alerts | Email via SNS, PagerDuty |
 
 ### CloudWatch Agent
 
-- Provides OS-level metrics
-- Needed for:
-  - Memory
-  - Disk
+- Provides OS-level metrics AWS cannot see from outside the instance
+- Required for:
+  - Memory utilization (`mem_used_percent`)
+  - Disk usage (`disk_used_percent`)
+  - Custom application metrics
+- Agent config is stored in Parameter Store for centralized management
 
 ### Parameter Store
 
-- Stores config centrally
-- Supports:
-  - Versioning
-  - Reusability
+- Stores config centrally — one place to update, all instances pick it up
+- Supports versioning — roll back if a config causes issues
+- Hierarchical naming (e.g. `/app/prod/cloudwatch-config`) for organization
 
 ### Alarm Flow
 
-Metric → Threshold → Alarm → SNS → Notification
+```
+EC2 Metric → CloudWatch Alarm → ALARM state → SNS Topic → Email/SMS/Lambda
+```
 
 ### Event-driven Monitoring
 
-EventBridge → Lambda → CloudWatch → SNS
+```
+EventBridge rule (rate: 1 min) → Lambda Canary → HTTP check
+                                      ↓ (on error)
+                               CloudWatch Error metric
+                                      ↓
+                               CloudWatch Alarm → SNS → Email
+```
 
 ## Final Summary
 

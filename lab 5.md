@@ -264,6 +264,21 @@ Backup Job → SNS → Lambda → Restore Job → SNS → Lambda → Cleanup
 ### SNS + Lambda Integration
 - SNS fans out notifications to multiple subscribers simultaneously
 - Lambda automates restore testing without manual intervention
+- This pattern (backup → SNS → Lambda → restore → SNS → Lambda → cleanup) is a fully automated **backup validation pipeline** — a best practice for any business continuity plan
+
+### Recovery Point vs Backup Job
+
+| Term | Meaning |
+|------|---------|
+| **Backup job** | The process of taking the snapshot |
+| **Recovery point** | The stored snapshot itself (what you restore from) |
+| **Restore job** | The process of creating a new resource from a recovery point |
+
+### Retention Policy
+
+- Recovery points are automatically deleted after the retention period expires
+- In this lab: 1-day retention (for cost/speed)
+- In production: typically 30–90 days depending on compliance requirements (e.g. HIPAA, PCI-DSS)
 
 ---
 
